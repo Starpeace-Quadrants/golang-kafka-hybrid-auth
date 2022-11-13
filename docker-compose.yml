@@ -1,0 +1,23 @@
+version: "3.9"
+services:
+  app:
+    build:
+      dockerfile: Dockerfile
+      context: .
+      target: dev
+    volumes:
+      - .:/opt/app/api
+    environment:
+      API_SERVER_ADDR: ":3000"
+      MONGO_SERVER_ADDR: ":27017"
+    ports:
+      - "3000:3000"
+  mongo:
+    container_name: mongo
+    image: mongo
+    volumes:
+      - ./data:/data/db
+    ports:
+      - "27017:27017"
+
+
