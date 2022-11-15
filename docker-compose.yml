@@ -12,6 +12,8 @@ services:
       MONGO_SERVER_ADDR: ":27017"
     ports:
       - "3000:3000"
+    networks:
+      - kafka_network
   mongo:
     container_name: mongo
     image: mongo
@@ -19,5 +21,9 @@ services:
       - ./data:/data/db
     ports:
       - "27017:27017"
-
+    networks:
+      - kafka_network
+networks:
+  kafka_network:
+    name: kafka_test_network
 
