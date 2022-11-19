@@ -30,14 +30,15 @@ func ProcessMessage(event event.Event) {
 
 func processAuthenticationRequest(key string, message transport.ServiceMessage) {
 	banned := &mongo.BannedIp{}
-	err := mgm.Coll(banned).First(bson.M{"host": message.ArgumentStore.GetString("host")}, banned)
-	// IF banned kick
-	if err == nil {
+	_ = mgm.Coll(banned).First(bson.M{"host": message.ArgumentStore.GetString("host")}, banned)
+
+	if len(banned.Host) == 0 {
 		HandleAuthenticationFailed(key, message)
 	}
 
 	user := &mongo.User{}
 	_ = mgm.Coll(user).First(bson.M{"session_id": message.ArgumentStore.GetString("sessionId")}, user)
+
 	if len(user.Email) == 0 {
 		processBan(message)
 		HandleAuthenticationFailed(key, message)
@@ -49,6 +50,32 @@ func processAuthenticationRequest(key string, message transport.ServiceMessage) 
 func processBan(message transport.ServiceMessage) {
 	banned := mongo.NewBannedIp(message.ArgumentStore.GetString("host"))
 	_ = mgm.Coll(banned).Create(banned)
+}
+
+func HandleAuthenticationFailed(key string, message transport.ServiceMessage) {
+	reply := transport.NewClientMessage()
+	reply.Command = "authenticate"
+	reply.Topic = message.Topic
+	reply.Results["authentication"] = false
+
+	replyBytes := reply.ToBytes()
+
+	topic, _ := kafka.GetTopicByName("authentication", "out")
+
+	kafka.Produce([]byte(key), replyBytes, topic, time.Now().Add(10*time.Second))
+}
+
+func HandleAuthenticationSuccess(key string, message transport.ServiceMessage) {
+	reply := transport.NewClientMessage()
+	reply.Command = "authenticate"
+	reply.Topic = message.Topic
+	reply.Results["authentication"] = true
+
+	replyBytes := reply.ToBytes()
+
+	topic, _ := kafka.GetTopicByName("authentication", "out")
+
+	kafka.Produce([]byte(key), replyBytes, topic, time.Now().Add(10*time.Second))
 }
 
 // processBanListRequest We get all banned ips, split into chunks of 100, we then stringify the chunks
@@ -79,30 +106,4 @@ func processBanListRequest(key string, message transport.ServiceMessage) {
 
 		go kafka.Produce([]byte(key), replyBytes, topic, time.Now().Add(10*time.Second))
 	}
-}
-
-func HandleAuthenticationFailed(key string, message transport.ServiceMessage) {
-	reply := transport.NewClientMessage()
-	reply.Command = "authenticate"
-	reply.Topic = message.Topic
-	reply.Results["authentication"] = false
-
-	replyBytes := reply.ToBytes()
-
-	topic, _ := kafka.GetTopicByName("authentication", "out")
-
-	kafka.Produce([]byte(key), replyBytes, topic, time.Now().Add(10*time.Second))
-}
-
-func HandleAuthenticationSuccess(key string, message transport.ServiceMessage) {
-	reply := transport.NewClientMessage()
-	reply.Command = "authenticate"
-	reply.Topic = message.Topic
-	reply.Results["authentication"] = true
-
-	replyBytes := reply.ToBytes()
-
-	topic, _ := kafka.GetTopicByName("authentication", "out")
-
-	kafka.Produce([]byte(key), replyBytes, topic, time.Now().Add(10*time.Second))
 }
