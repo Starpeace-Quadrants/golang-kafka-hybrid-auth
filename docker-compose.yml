@@ -8,8 +8,14 @@ services:
     volumes:
       - .:/opt/app/api
     environment:
-      API_SERVER_ADDR: ":3000"
-      MONGO_SERVER_ADDR: ":27017"
+      API_SERVER_HOST: ""
+      API_SERVER_PORT: "3000"
+      MONGO_SERVER_HOST: "mongo"
+      MONGO_SERVER_PORT: "27017"
+      MONGO_SERVER_DATABASE: "authentication"
+      CLIENT_PROTOCOL: "http"
+      CLIENT_DOMAIN: "localhost"
+      CLIENT_PORT: "4000"
     ports:
       - "3000:3000"
     networks:

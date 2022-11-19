@@ -1,47 +1,54 @@
 package mongo
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"go.mongodb.org/mongo-driver/mongo"
+	"github.com/kamva/mgm/v3"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"log"
 	"os"
 )
 
-type Database struct {
-	addr   string
-	Client *mongo.Client
+func init() {
+	host := os.Getenv("MONGO_SERVER_HOST")
+	port := os.Getenv("MONGO_SERVER_PORT")
+	database := os.Getenv("MONGO_SERVER_DATABASE")
+
+	if err := mgm.SetDefaultConfig(nil, database, options.Client().ApplyURI(fmt.Sprintf("mongodb://%s:%s", host, port))); err != nil {
+		panic(err)
+	}
 }
 
-func NewDatabase() (*Database, error) {
-	addr := os.Getenv("MONGO_SERVER_ADDR")
-	if addr == "" {
-		return nil, errors.New("mongo addr cannot be blank")
-	}
-
-	return &Database{
-		addr: addr,
-	}, nil
+type User struct {
+	mgm.DefaultModel
+	Email     string `bson:"email" json:"email"`
+	SessionId string `bson:"session_id" json:"sessionId"`
+	Provider  string `bson:"provider" json:"provider"`
+	CreatedIp string `bson:"created_ip" json:"createdIp"`
 }
 
-func (db *Database) Start() {
-	clientOptions := options.Client().ApplyURI(fmt.Sprintf("mongodb://mongo%s", db.addr))
-	client, err := mongo.Connect(context.TODO(), clientOptions)
+func NewUser(email string, sessionId string, provider string, createdIp string) *User {
+	return &User{
+		Email:     email,
+		SessionId: sessionId,
+		Provider:  provider,
+		CreatedIp: createdIp,
+	}
+}
 
-	if err != nil {
-		log.Fatal(err)
+type BannedIp struct {
+	mgm.DefaultModel
+	Host string `bson:"host" json:"host"`
+}
+
+func NewBannedIp(host string) *BannedIp {
+	return &BannedIp{
+		Host: host,
+	}
+}
+
+func ChunkBanned(items []BannedIp, chunkSize int) (chunks [][]BannedIp) {
+	for chunkSize < len(items) {
+		items, chunks = items[chunkSize:], append(chunks, items[0:chunkSize:chunkSize])
 	}
 
-	// Check the connection
-	err = client.Ping(context.TODO(), nil)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	db.Client = client
-
-	fmt.Println("Connected to MongoDB!")
+	return append(chunks, items)
 }

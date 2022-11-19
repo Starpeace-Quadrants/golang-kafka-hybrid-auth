@@ -1,99 +1,108 @@
 package consumer
 
 import (
-	"encoding/json"
-	"fmt"
 	"github.com/gookit/event"
+	"github.com/kamva/mgm/v3"
 	kafka "github.com/ronappleton/gk-kafka"
+	"github.com/ronappleton/gk-kafka/storage"
 	transport "github.com/ronappleton/gk-message-transport"
-	"github.com/ronappleton/golang-kafka-hybrid-authentication/storage/mongo/tables"
-	"github.com/ronappleton/golang-kafka-hybrid-authentication/utilities"
-	"go.mongodb.org/mongo-driver/mongo"
-	"log"
-	"strconv"
+	"github.com/ronappleton/golang-kafka-hybrid-authentication/storage/mongo"
+	"go.mongodb.org/mongo-driver/bson"
 	"strings"
 	"time"
 )
 
-func ProcessMessage(event event.Event, db *mongo.Client) {
-	message := fmt.Sprint(event.Get("message"))
-	key := fmt.Sprint(event.Get("key"))
+func ProcessMessage(event event.Event) {
+	data := storage.New()
+	data.Populate(event.Data())
 
-	serviceMessage, err := transport.DecodeIncomingServiceMessage([]byte(message))
-	if err != nil {
-		log.Fatalf("message could not be decoded: %v", fmt.Sprint(message))
-		return
-	}
+	message := data.GetMessage()
+
+	serviceMessage := transport.BytesToServiceMessage(message.Value)
 
 	switch command := serviceMessage.Command; command {
 	case "authenticate":
-		processAuthenticationRequest(key, db, *serviceMessage)
+		processAuthenticationRequest(string(message.Key), serviceMessage)
 	case "ban_list":
-		processBanListRequest(key, db, *serviceMessage)
+		processBanListRequest(string(message.Key), serviceMessage)
 	}
 }
 
-func processAuthenticationRequest(key string, db *mongo.Client, message transport.IncomingServiceMessage) {
-	bannedIps := tables.BannedIp{Host: message.Arguments["host"]}
-	banned := false
-	if bannedIps.Fetch(db) {
-		banned = true
+func processAuthenticationRequest(key string, message transport.ServiceMessage) {
+	banned := &mongo.BannedIp{}
+	err := mgm.Coll(banned).First(bson.M{"host": message.ArgumentStore.GetString("host")}, banned)
+	// IF banned kick
+	if err == nil {
+		HandleAuthenticationFailed(key, message)
 	}
 
-	user := &tables.User{SessionId: message.Arguments["sessionId"]}
-	valid := user.ValidateSession(db)
-
-	if !valid {
-		processBan(db, message)
+	user := &mongo.User{}
+	_ = mgm.Coll(user).First(bson.M{"session_id": message.ArgumentStore.GetString("sessionId")}, user)
+	if len(user.Email) == 0 {
+		processBan(message)
+		HandleAuthenticationFailed(key, message)
 	}
 
-	reply := transport.OutgoingServiceMessage{
-		Topic: message.Topic,
-		Reply: strconv.FormatBool(valid && !banned),
-	}
-
-	replyBytes, _ := reply.Encode()
-	topic := kafka.Topic{
-		Topic:     "authentication_out",
-		Leader:    "kafka:9092",
-		Partition: 0,
-	}
-
-	kafka.Produce([]byte(key), replyBytes, topic, time.Now().Add(10*time.Second))
+	HandleAuthenticationSuccess(key, message)
 }
 
-func processBan(db *mongo.Client, message transport.IncomingServiceMessage) {
-	banned := tables.BannedIp{
-		Host:     message.Arguments["host"],
-		BannedAt: time.Time{},
-	}
-
-	banned.Upsert(db)
+func processBan(message transport.ServiceMessage) {
+	banned := mongo.NewBannedIp(message.ArgumentStore.GetString("host"))
+	_ = mgm.Coll(banned).Create(banned)
 }
 
 // processBanListRequest We get all banned ips, split into chunks of 100, we then stringify the chunks
 // encode them and send them back to the relay one by one to prevent huge messages, this is used on
 // startup of the relay server to ensure we keep banned ips from using the services
-func processBanListRequest(key string, db *mongo.Client, message transport.IncomingServiceMessage) {
-	bannedIps := tables.BannedIp{}
-	ips := bannedIps.FetchAll(db)
-	chunks := utilities.ChunkStringSlice(ips, 100)
+func processBanListRequest(key string, message transport.ServiceMessage) {
+	var banned []mongo.BannedIp
+
+	_ = mgm.Coll(&mongo.BannedIp{}).SimpleFind(banned, bson.M{})
+
+	chunks := mongo.ChunkBanned(banned, 100)
 
 	for _, chunk := range chunks {
-		sliceString := strings.Join(chunk, ",")
-		encodedString, _ := json.Marshal(sliceString)
-		reply := transport.OutgoingServiceMessage{
-			Topic: message.Topic,
-			Reply: string(encodedString),
+		var stringSlice []string
+		for _, banned := range chunk {
+			stringSlice = append(stringSlice, banned.Host)
 		}
 
-		replyBytes, _ := reply.Encode()
-		topic := kafka.Topic{
-			Topic:     "authentication_out",
-			Leader:    "kafka:9092",
-			Partition: 0,
-		}
+		sliceString := strings.Join(stringSlice, ",")
+
+		reply := transport.NewClientMessage()
+		reply.Topic = message.Topic
+		reply.Results["hosts"] = sliceString
+
+		replyBytes := reply.ToBytes()
+
+		topic, _ := kafka.GetTopicByName("authentication", "out")
 
 		go kafka.Produce([]byte(key), replyBytes, topic, time.Now().Add(10*time.Second))
 	}
+}
+
+func HandleAuthenticationFailed(key string, message transport.ServiceMessage) {
+	reply := transport.NewClientMessage()
+	reply.Command = "authenticate"
+	reply.Topic = message.Topic
+	reply.Results["authentication"] = false
+
+	replyBytes := reply.ToBytes()
+
+	topic, _ := kafka.GetTopicByName("authentication", "out")
+
+	kafka.Produce([]byte(key), replyBytes, topic, time.Now().Add(10*time.Second))
+}
+
+func HandleAuthenticationSuccess(key string, message transport.ServiceMessage) {
+	reply := transport.NewClientMessage()
+	reply.Command = "authenticate"
+	reply.Topic = message.Topic
+	reply.Results["authentication"] = true
+
+	replyBytes := reply.ToBytes()
+
+	topic, _ := kafka.GetTopicByName("authentication", "out")
+
+	kafka.Produce([]byte(key), replyBytes, topic, time.Now().Add(10*time.Second))
 }

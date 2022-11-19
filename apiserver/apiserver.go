@@ -3,18 +3,21 @@ package apiserver
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/didip/tollbooth"
 	"github.com/didip/tollbooth/limiter"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
-	"github.com/ronappleton/golang-kafka-hybrid-authentication/storage/mongo/tables"
+	"github.com/kamva/mgm/v3"
+	"github.com/ronappleton/gk-kafka/storage"
+	"github.com/ronappleton/golang-kafka-hybrid-authentication/storage/mongo"
 	"github.com/rs/cors"
 	"github.com/sirupsen/logrus"
+	"go.mongodb.org/mongo-driver/bson"
 	mongodb "go.mongodb.org/mongo-driver/mongo"
 	"google.golang.org/api/idtoken"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -34,30 +37,27 @@ type SessionResponse struct {
 	SessionId string `json:"sessionId"`
 }
 
-func NewAPIServer(client *mongodb.Client) (*APIServer, error) {
-	addr := os.Getenv("API_SERVER_ADDR")
-	if addr == "" {
-		return nil, errors.New("api addr cannot be blank")
-	}
+func NewAPIServer() (*APIServer, error) {
+	host := os.Getenv("API_SERVER_HOST")
+	port := os.Getenv("API_SERVER_PORT")
+
+	addr := fmt.Sprintf("%s:%s", host, port)
 
 	return &APIServer{
-		addr:     addr,
-		dbClient: client,
+		addr: addr,
 	}, nil
 }
 
 // Start starts a server with a stop channel
 func (s *APIServer) Start() {
 	srv := &http.Server{
-		Addr: s.addr,
 		// Good practice to set timeouts to avoid Slowloris attacks.
 		WriteTimeout: time.Second * 15,
 		ReadTimeout:  time.Second * 15,
 		IdleTimeout:  time.Second * 60,
 		Handler:      s.router(),
+		Addr:         s.addr,
 	}
-
-	logrus.WithField("addr", srv.Addr).Info("starting server")
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logrus.Fatalf("listen: %s\n", err)
@@ -74,8 +74,10 @@ func (s *APIServer) router() http.Handler {
 
 	router.Handle("/google/verify", tollbooth.LimitFuncHandler(rateLimiter, s.GoogleVerify))
 
+	clientOrigin := fmt.Sprintf("%s://%s:%s", os.Getenv("CLIENT_PROTOCOL"), os.Getenv("CLIENT_DOMAIN"), os.Getenv("CLIENT_PORT"))
+
 	c := cors.New(cors.Options{
-		AllowedOrigins:         []string{"http://localhost:4000"},
+		AllowedOrigins:         []string{clientOrigin},
 		AllowOriginFunc:        nil,
 		AllowOriginRequestFunc: nil,
 		AllowedMethods:         nil,
@@ -98,31 +100,28 @@ func (s *APIServer) GoogleVerify(w http.ResponseWriter, r *http.Request) {
 	payload, err := idtoken.Validate(context.Background(), token, "939293573845-e3e5t507011f13rid8ccu4iv4p6be2i8.apps.googleusercontent.com")
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
-		log.Fatal("verification failed with error", err)
-
-		return
+		log.Println("verification failed with error ", err)
+		w.Write([]byte(fmt.Sprintf("Authentication failed: %s", err)))
 	}
 
-	if payload.Claims["email_verified"] == false {
+	data := storage.New()
+	data.Populate(payload.Claims)
+
+	if data.GetBool("email_verified") == false {
 		w.WriteHeader(http.StatusUnauthorized)
 
 		err, _ := json.Marshal(&ErrorResponse{Error: "Your Google email address must be verified!"})
 		w.Write(err)
-
-		return
 	}
 
 	u := uuid.New()
 
-	user := &tables.User{
-		Email:     fmt.Sprintf("%s", payload.Claims["email"]),
-		SessionId: u.String(),
-		Provider:  "google",
-		CreatedAt: time.Now().UTC(),
-		CreatedIp: r.RemoteAddr,
-	}
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	fmt.Println("Host: ", host)
+	user := mongo.NewUser(data.GetString("email"), u.String(), "google", host)
+	options := mgm.UpsertTrueOption()
 
-	user.UpsertUser(s.dbClient)
+	_ = mgm.Coll(user).Update(user, options)
 
 	w.WriteHeader(http.StatusOK)
 
@@ -132,7 +131,9 @@ func (s *APIServer) GoogleVerify(w http.ResponseWriter, r *http.Request) {
 
 	w.Write(sessionResponse)
 
-	t := &tables.User{Email: fmt.Sprintf("%s", payload.Claims["email"])}
+	t := &mongo.User{}
 
-	fmt.Sprintf("Stored User Record: %v", t.Fetch(s.dbClient))
+	_ = mgm.Coll(t).First(bson.M{"email": data.GetString("email")}, t)
+
+	fmt.Sprintf("Stored User Record: %v", t)
 }

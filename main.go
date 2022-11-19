@@ -5,25 +5,18 @@ import (
 	"github.com/ronappleton/gk-kafka"
 	"github.com/ronappleton/golang-kafka-hybrid-authentication/apiserver"
 	"github.com/ronappleton/golang-kafka-hybrid-authentication/consumer"
-	"github.com/ronappleton/golang-kafka-hybrid-authentication/storage/mongo"
 )
 
 func main() {
-	db, err := mongo.NewDatabase()
-	if err != nil {
-		panic(err.Error())
-	}
-
-	db.Start()
-
 	event.On("messageReceived", event.ListenerFunc(func(e event.Event) error {
-		consumer.ProcessMessage(e, db.Client)
+		consumer.ProcessMessage(e)
 		return nil
 	}), event.Normal)
 
+	kafka.InitTopics("kafka", 9092)
 	go kafka.SaramaConsume("kafka:9092", "auth", "authentication_in")
 
-	api, err := apiserver.NewAPIServer(db.Client)
+	api, err := apiserver.NewAPIServer()
 	if err != nil {
 		panic(err.Error())
 	}
