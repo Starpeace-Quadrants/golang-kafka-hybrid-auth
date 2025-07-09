@@ -117,8 +117,6 @@ github.com/prometheus/client_model v0.0.0-20190812154241-14fe0d1b01d4/go.mod h1:
 github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 h1:N/ElC8H3+5XpJzTSTfLsJV/mx9Q9g7kxmchpfZyxgzM=
 github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475/go.mod h1:bCqnVzQkZxMG4s8nGwiZ5l3QUCyqpo9Y+/ZMZ9VjZe4=
 github.com/rogpeppe/go-internal v1.9.0 h1:73kH8U+JUqXU8lRuOHeVHaa/SZPifC7BkcraZVejAe8=
-github.com/ronappleton/gk-kafka v0.0.0-20221118234506-72f349f001d8 h1:Cydg035CKNh99VA3hfVHslQIiICdgCj9jNm+mM9LNBQ=
-github.com/ronappleton/gk-kafka v0.0.0-20221118234506-72f349f001d8/go.mod h1:NHTmMM+hxwvg3obrFt5VSgye2IHghmTF7rev9JxeCkk=
 github.com/ronappleton/gk-kafka v0.0.0-20221119000135-79448ad35dc2 h1:4WQ2UHzy4EYcoGSy/M1UKrdfg/ebMiRmXlduuK8dQJU=
 github.com/ronappleton/gk-kafka v0.0.0-20221119000135-79448ad35dc2/go.mod h1:NHTmMM+hxwvg3obrFt5VSgye2IHghmTF7rev9JxeCkk=
 github.com/ronappleton/gk-message-transport v1.1.2 h1:OCn7qCmSZjHXWNQQJnffdcolXa/ibCGDYZRW85u3if4=

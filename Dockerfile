@@ -1,8 +1,15 @@
-FROM golang:1.19 as base
-
-FROM base as dev
-
-RUN curl -sSfL https://raw.githubusercontent.com/cosmtrek/air/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
+FROM golang:1.19 as builder
 
 WORKDIR /opt/app/api
-CMD ["air"]
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN go build -o auth-service ./
+
+FROM golang:1.19 as final
+WORKDIR /opt/app/api
+COPY --from=builder /opt/app/api/auth-service ./auth-service
+
+CMD ["./auth-service"]

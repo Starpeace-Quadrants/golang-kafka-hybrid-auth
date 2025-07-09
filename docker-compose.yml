@@ -4,9 +4,6 @@ services:
     build:
       dockerfile: Dockerfile
       context: .
-      target: dev
-    volumes:
-      - .:/opt/app/api
     environment:
       API_SERVER_HOST: ""
       API_SERVER_PORT: "3000"

@@ -2,6 +2,8 @@ package apiserver
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"github.com/didip/tollbooth"
@@ -16,10 +18,13 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	mongodb "go.mongodb.org/mongo-driver/mongo"
 	"google.golang.org/api/idtoken"
+	"google.golang.org/api/option"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -35,6 +40,38 @@ type ErrorResponse struct {
 
 type SessionResponse struct {
 	SessionId string `json:"sessionId"`
+}
+
+// httpClientWithCerts creates an HTTP client that trusts certificates mounted in
+// the provided directory. All files in the directory are read and any valid PEM
+// data is added to the certificate pool.
+func httpClientWithCerts(dir string) (*http.Client, error) {
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+
+	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() {
+			return nil
+		}
+
+		pemData, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+		pool.AppendCertsFromPEM(pemData)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: pool},
+	}
+
+	return &http.Client{Transport: transport}, nil
 }
 
 func NewAPIServer() (*APIServer, error) {
@@ -96,12 +133,25 @@ func (s *APIServer) router() http.Handler {
 func (s *APIServer) GoogleVerify(w http.ResponseWriter, r *http.Request) {
 	token := r.Header.Get("Authorization")
 	token = strings.TrimPrefix(token, "Bearer ")
+	client, err := httpClientWithCerts("/app/certs")
+	if err != nil {
+		log.Println("failed to load certs from /app/certs:", err)
+		client = http.DefaultClient
+	}
 
-	payload, err := idtoken.Validate(context.Background(), token, "939293573845-e3e5t507011f13rid8ccu4iv4p6be2i8.apps.googleusercontent.com")
+	validator, err := idtoken.NewValidator(context.Background(), option.WithHTTPClient(client))
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("failed to create validator", err)
+		return
+	}
+
+	payload, err := validator.Validate(context.Background(), token, "939293573845-e3e5t507011f13rid8ccu4iv4p6be2i8.apps.googleusercontent.com")
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		log.Println("verification failed with error ", err)
 		w.Write([]byte(fmt.Sprintf("Authentication failed: %s", err)))
+		return
 	}
 
 	data := storage.New()
