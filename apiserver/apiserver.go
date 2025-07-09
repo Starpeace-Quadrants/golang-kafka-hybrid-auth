@@ -113,8 +113,10 @@ func (s *APIServer) router() http.Handler {
 
 	clientOrigin := fmt.Sprintf("%s://%s:%s", os.Getenv("CLIENT_PROTOCOL"), os.Getenv("CLIENT_DOMAIN"), os.Getenv("CLIENT_PORT"))
 
+	allowedOrigins := []string{clientOrigin, "https://localhost:3000"}
+
 	c := cors.New(cors.Options{
-		AllowedOrigins:         []string{clientOrigin},
+		AllowedOrigins:         allowedOrigins,
 		AllowOriginFunc:        nil,
 		AllowOriginRequestFunc: nil,
 		AllowedMethods:         nil,
